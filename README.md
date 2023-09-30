@@ -26,7 +26,7 @@ That's it! The intent was to make this a good starting point for serverless batc
 
 In **samconfig.toml** set `EmailAddress` in `parameter_overrides` to the email that you want to subscribe to summary notifications.
 
-Next, run `sam build` and then `sam deploy` to build and deploy the stack to your AWS account. Take note of the _Dispatcher_ and _Summary_ lambda endpoints that get printed to the terminal after the deploy completes.
+Next, run `sam build` and then `sam deploy` to build and deploy the stack to your AWS account. Take note of the _Dispatcher_ and _Summary_ lambda endpoints that get printed to the terminal after the deploy completes. You'll also need to copy the **jobs.json** file to the config bucket that gets created.
 
 You will get an email shortly after from **AWS Notifications** confirming that you want to subscribe for notifications.
 
