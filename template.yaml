@@ -1,0 +1,214 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sam-serverless-batch-job
+
+  Sample SAM Template for sam-serverless-batch-job
+
+Parameters:
+  EmailAddress:
+    Type: String
+    Description: Email address for SNS subscription
+  TopicName:
+    Type: String
+    Description: SNS topic name
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+Resources:
+  DispatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dispatch/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RunsTable
+      Events:
+        API:
+          Type: Api # api trigger makes this easy to test, switch to a scheduled trigger for prod
+          Properties:
+            Path: /dispatch
+            Method: get
+      Environment:
+        Variables:
+          WORKER_LAMBDA_ARN: !Ref WorkerFunction
+          CONFIG_BUCKET_ARN: !Ref ConfigBucket
+          SQS_URL: !Ref RunQueue
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: worker/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+      Timeout: 60
+      Environment:
+        Variables:
+          ARTIFACTS_BUCKET_ARN: !Ref ArtifactsBucket
+
+  SummaryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: summary/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      Events:
+        API:
+          Type: Api
+          Properties:
+            Path: /summary
+            Method: get
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+      Timeout: 120
+      Environment:
+        Variables:
+          SQS_URL: !Ref RunQueue
+          SNS_TOPIC_ARN: !Ref SNSTopic
+
+  DispatchToWorkerConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: DispatchFunction
+      Destination:
+        Id: WorkerFunction
+      Permissions:
+        - "Write"
+
+  DispatchToConfigBucketConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: DispatchFunction
+      Destination:
+        Id: ConfigBucket
+      Permissions:
+        - "Read"
+
+  DispatchToQueueConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: DispatchFunction
+      Destination:
+        Id: RunQueue
+      Permissions:
+        - "Read"
+        - "Write"
+
+  ToQueueConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: SummaryFunction
+      Destination:
+        Id: RunQueue
+      Permissions:
+        - "Read"
+        - "Write"
+
+  SummaryToSNSConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: SummaryFunction
+      Destination:
+        Id: SNSTopic
+      Permissions:
+        - Write
+
+  WorkerToArtifactsBucketConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: WorkerFunction
+      Destination:
+        Id: ArtifactsBucket
+      Permissions:
+        - "Read"
+        - "Write"
+
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref EmailAddress
+      TopicName: !Ref TopicName
+
+  RunQueue:
+    Type: AWS::SQS::Queue
+
+  ConfigBucket:
+    Type: "AWS::S3::Bucket"
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  ArtifactsBucket:
+    Type: "AWS::S3::Bucket"
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  RunsTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: Runs
+      PrimaryKey:
+        Name: RunID
+        Type: String
+
+  JobsTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: Jobs
+      PrimaryKey:
+        Name: JobID
+        Type: String
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  DispatchApi:
+    Description: "API Gateway endpoint URL for Prod stage for Dispatch function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/dispatch/"
+  DispatchFunction:
+    Description: "Dispatch Lambda Function ARN"
+    Value: !GetAtt DispatchFunction.Arn
+  DispatchFunctionIamRole:
+    Description: "Implicit IAM Role created for Dispatch function"
+    Value: !GetAtt DispatchFunctionRole.Arn
+  SummaryApi:
+    Description: "API Gateway endpoint URL for Prod stage for Summary function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/summary/"
+  SummaryFunction:
+    Description: "Summary Lambda Function ARN"
+    Value: !GetAtt SummaryFunction.Arn
+  SummaryFunctionIamRole:
+    Description: "Implicit IAM Role created for Summary function"
+    Value: !GetAtt SummaryFunctionRole.Arn
+  WorkerFunction:
+    Description: "Worker Lambda Function ARN"
+    Value: !GetAtt WorkerFunction.Arn
+  WorkerFunctionIamRole:
+    Description: "Implicit IAM Role created for Worker function"
+    Value: !GetAtt WorkerFunctionRole.Arn
+  RunQueueUrl:
+    Description: "Run Queue URL"
+    Value: !Ref RunQueue
